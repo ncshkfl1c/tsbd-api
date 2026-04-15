@@ -8,7 +8,7 @@ import os
 app = Flask(__name__)
 
 # ===== HOME (tránh lỗi 404)
-@app.route('/')
+@app.route('/check')
 def home():
     return "TSBD API is running"
 
