@@ -7,7 +7,12 @@ import os
 
 app = Flask(__name__)
 
-# ===== FIX SERIAL DATE (giữ nguyên logic VBA)
+# ===== HOME (tránh lỗi 404)
+@app.route('/')
+def home():
+    return "TSBD API is running"
+
+# ===== FIX SERIAL DATE (giống VBA)
 def FixSerialDate(strInput):
     if pd.isna(strInput) or strInput == "":
         return ""
@@ -31,51 +36,38 @@ def FixSerialDate(strInput):
 
 
 def process_tsbd(file_old, file_new, file_map=None):
-    df_old = pd.read_excel(file_old)
-    df_new = pd.read_excel(file_new)
+    df_old = pd.read_excel(file_old).fillna("")
+    df_new = pd.read_excel(file_new).fillna("")
 
-    df_old = df_old.fillna("")
-    df_new = df_new.fillna("")
-
-    # ===== DICTIONARY (giống VBA)
     dictAll = {}
     dictNewOnly = {}
 
+    # ===== LOAD FILE NEW
     for i in range(len(df_new)):
         colID = str(df_new.at[i, 'L']).strip()
         if colID != "":
             dictAll[colID] = i
             dictNewOnly[colID] = i
 
-    # ===== XỬ LÝ DATA CŨ (loop ngược)
+    # ===== XỬ LÝ OLD
     rows_keep = []
 
     for i in range(len(df_old)-1, -1, -1):
         colID = str(df_old.at[i, 'J']).strip()
 
         if colID in dictAll:
-
             rNew = dictAll[colID]
 
-            # --- ngày gia hạn U
             try:
                 ngayGiaHanNew = pd.to_datetime(df_new.at[rNew, 'U']).strftime("%d/%m/%Y")
             except:
                 ngayGiaHanNew = str(df_new.at[rNew, 'U']).strip()
 
-            # --- ngày mượn O
             try:
                 ngayMuon = pd.to_datetime(df_new.at[rNew, 'O']).strftime("%d/%m/%Y")
             except:
                 ngayMuon = str(df_new.at[rNew, 'O']).strip()
 
-            # --- ngày trả T
-            try:
-                ngayHoanTraNew = pd.to_datetime(df_new.at[rNew, 'T']).strftime("%d/%m/%Y")
-            except:
-                ngayHoanTraNew = str(df_new.at[rNew, 'T'])
-
-            # --- lịch sử cũ
             lichSuCu = str(df_old.at[i, 'U'])
 
             if lichSuCu.startswith("'"):
@@ -83,40 +75,25 @@ def process_tsbd(file_old, file_new, file_map=None):
 
             lichSuCu = FixSerialDate(lichSuCu)
 
-            # ===== thêm ngày gia hạn nếu cần
-            if ngayGiaHanNew != "" and ngayGiaHanNew != ngayMuon:
+            if ngayGiaHanNew and ngayGiaHanNew != ngayMuon:
                 if ngayGiaHanNew not in lichSuCu:
-                    if lichSuCu == "":
-                        lichSuCu = ngayGiaHanNew
-                    else:
-                        lichSuCu = lichSuCu + "; " + ngayGiaHanNew
+                    lichSuCu = f"{lichSuCu}; {ngayGiaHanNew}" if lichSuCu else ngayGiaHanNew
 
-            # ===== đếm số lần
-            lichSuTemp = lichSuCu
-            lichSuTemp = FixSerialDate(lichSuTemp)
-
-            if lichSuTemp == "":
-                count = ""
+            if lichSuCu:
+                count = len(lichSuCu.replace(" ", "").split(";"))
             else:
-                arr = lichSuTemp.replace(" ", "").split(";")
-                count = len(arr)
+                count = ""
 
             df_old.at[i, 'U'] = lichSuCu
             df_old.at[i, 'T'] = count
 
             rows_keep.append(df_old.loc[i])
-
-            if colID in dictNewOnly:
-                del dictNewOnly[colID]
-
-        # ELSE = delete row (không add vào rows_keep)
+            dictNewOnly.pop(colID, None)
 
     df_old = pd.DataFrame(rows_keep[::-1])
 
     # ===== THÊM MỚI
-    for colID in dictNewOnly.keys():
-
-        rNew = dictNewOnly[colID]
+    for colID, rNew in dictNewOnly.items():
         new_row = {}
 
         new_row['B'] = df_new.at[rNew, 'D']
@@ -125,7 +102,6 @@ def process_tsbd(file_old, file_new, file_map=None):
         new_row['E'] = df_new.at[rNew, 'G']
         new_row['J'] = df_new.at[rNew, 'L']
 
-        # --- ngày mượn
         try:
             new_row['M'] = pd.to_datetime(df_new.at[rNew, 'O']).strftime("%d/%m/%Y")
         except:
@@ -133,52 +109,34 @@ def process_tsbd(file_old, file_new, file_map=None):
 
         new_row['O'] = df_new.at[rNew, 'P']
 
-        # --- ngày trả
         try:
             new_row['S'] = pd.to_datetime(df_new.at[rNew, 'T']).strftime("%d/%m/%Y")
         except:
             new_row['S'] = df_new.at[rNew, 'T']
 
-        # --- lịch sử
         try:
             u = pd.to_datetime(df_new.at[rNew, 'U'])
             o = pd.to_datetime(df_new.at[rNew, 'O'])
-
             if u != o:
                 new_row['U'] = u.strftime("%d/%m/%Y")
         except:
             pass
 
-        # --- Y
         valX = df_new.at[rNew, 'X']
-        if str(valX).isdigit():
-            new_row['Y'] = str(valX).zfill(10)
-        else:
-            new_row['Y'] = valX
+        new_row['Y'] = str(valX).zfill(10) if str(valX).isdigit() else valX
 
-        # --- đếm
         lichSuCu = FixSerialDate(new_row.get('U', ""))
-
-        if lichSuCu == "":
-            new_row['T'] = ""
-        else:
-            new_row['T'] = len(lichSuCu.replace(" ", "").split(";"))
+        new_row['T'] = len(lichSuCu.replace(" ", "").split(";")) if lichSuCu else ""
 
         df_old = pd.concat([df_old, pd.DataFrame([new_row])], ignore_index=True)
 
     # ===== MAP FILE
     if file_map:
         df_map = pd.read_excel(file_map).fillna("")
-        dictMap = {}
-
-        for i in range(len(df_map)):
-            key = str(df_map.at[i, 'C']).strip()
-            if key != "":
-                dictMap[key] = i
+        dictMap = {str(df_map.at[i, 'C']).strip(): i for i in range(len(df_map))}
 
         for i in range(len(df_old)):
             key = str(df_old.at[i, 'B']).strip()
-
             if key in dictMap:
                 rMap = dictMap[key]
                 df_old.at[i, 'AA'] = df_map.at[rMap, 'D']
@@ -186,17 +144,12 @@ def process_tsbd(file_old, file_new, file_map=None):
 
     # ===== QUÁ HẠN
     today = datetime.today()
-
     df_old['AB'] = ""
 
     for i in range(len(df_old)):
         try:
             ngayTra = pd.to_datetime(df_old.at[i, 'S'])
-
-            if ngayTra < today:
-                df_old.at[i, 'AB'] = "Qua han"
-            else:
-                df_old.at[i, 'AB'] = "Chua qua han"
+            df_old.at[i, 'AB'] = "Qua han" if ngayTra < today else "Chua qua han"
         except:
             df_old.at[i, 'AB'] = "Chua qua han"
 
@@ -206,26 +159,34 @@ def process_tsbd(file_old, file_new, file_map=None):
 # ===== API
 @app.route('/process-tsbd', methods=['POST'])
 def api():
-    data = request.json
+    try:
+        data = request.json
 
-    file_old = base64.b64decode(data['old'])
-    file_new = base64.b64decode(data['new'])
-    file_map = base64.b64decode(data['map']) if data.get('map') else None
+        if not data:
+            return jsonify({"error": "No JSON received"}), 400
 
-    df = process_tsbd(
-        io.BytesIO(file_old),
-        io.BytesIO(file_new),
-        io.BytesIO(file_map) if file_map else None
-    )
+        file_old = base64.b64decode(data['old'])
+        file_new = base64.b64decode(data['new'])
+        file_map = base64.b64decode(data['map']) if data.get('map') else None
 
-    output = io.BytesIO()
-    df.to_excel(output, index=False)
+        df = process_tsbd(
+            io.BytesIO(file_old),
+            io.BytesIO(file_new),
+            io.BytesIO(file_map) if file_map else None
+        )
 
-    return jsonify({
-        "file": base64.b64encode(output.getvalue()).decode()
-    })
+        output = io.BytesIO()
+        df.to_excel(output, index=False)
+
+        return jsonify({
+            "file": base64.b64encode(output.getvalue()).decode()
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
+# ===== RUN
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
